@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.part
+config.yaml
+config.json
+*.onnx
+models/
+clips/
+*.mp4
+merged/
+.venv/
+venv/

@@ -1,0 +1,51 @@
+# FieldGhost config -- copy to config.yaml and fill in for your own task.
+
+cvat:
+  host: "https://cvat.example.com"     # no trailing slash
+  frame_step: 5                         # must match the task's frame_filter step in CVAT
+  person_label_id: 8                    # CVAT label_id for the "person" label on this task
+                                         # (Menu > find in Task > Labels, or GET /api/labels?task_id=)
+
+  # Default attributes stamped on every new shape/track. Optional -- delete
+  # if your label has no attributes, or trim to the ones you actually use.
+  default_attributes:
+    - {spec_id: 23, value: "unconfirmed"}
+    - {spec_id: 24, value: "unknown"}
+
+  # Optional: marks whether a shape is a resolved detection or an unresolved
+  # occlusion ghost, so a human reviewer can filter for exactly those in the
+  # CVAT UI. Must be a MUTABLE attribute on the label (CVAT requires mutable
+  # attributes to live on each shape, not on the track) or the upload will
+  # silently drop/ignore it.
+  ghost_attribute:
+    spec_id: 26
+    resolved_value: "detected"
+    unresolved_value: "unresolved_detection_gap"
+
+model:
+  path: "./models/yolov7-nms-640.onnx"  # any YOLO ONNX export with NMS baked in
+  class_id: 0                            # COCO class to keep (0 = person)
+  threshold: 0.25                        # main-pass confidence threshold
+
+# One entry per video clip. `name` is used as the prefix for every output
+# file (<name>.json, <name>_tracks.json, ...) so pick something stable.
+# `source_start_frame` is the native frame number, in the FULL source video,
+# where this clip begins -- this is what lets merge_upload.py place the clip
+# correctly on the CVAT task's timeline. If you don't know it exactly, an
+# approximate value is fine as a start; verify/tune the seams afterwards by
+# checking the CVAT UI at each job boundary.
+clips:
+  - name: clip_01
+    video: "./clips/part_01.mp4"
+    source_start_frame: 0
+  - name: clip_02
+    video: "./clips/part_02.mp4"
+    source_start_frame: 26750
+    # window: [5375, 10781]   # optional: override the auto midpoint-of-neighbours split
+
+# One entry per CVAT job on the task, with the [start,end] task-frame window
+# (inclusive) it owns. GET /api/tasks/<id>/jobs lists job ids; a job's frame
+# range is (start_frame, stop_frame) from GET /api/jobs/<id>.
+jobs:
+  - {job_id: 102, start: 0, end: 5112}
+  - {job_id: 103, start: 5113, end: 10225}

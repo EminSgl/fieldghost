@@ -1,0 +1,5 @@
+onnxruntime-gpu>=1.17  # falls back fine if you only have CPU, but expect it to be slow; swap for onnxruntime if you have no CUDA GPU at all
+opencv-python>=4.8
+numpy>=1.24
+scipy>=1.11
+pyyaml>=6.0

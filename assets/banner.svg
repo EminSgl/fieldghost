@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 220" width="100%" role="img" aria-label="FieldGhost">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b1020"/>
+      <stop offset="100%" stop-color="#131a30"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#7dd3fc" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#a5f3fc" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#7dd3fc" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6"/>
+    </filter>
+  </defs>
+
+  <rect width="960" height="220" rx="18" fill="url(#bg)"/>
+
+  <!-- drifting ghost mark -->
+  <g transform="translate(64,72)" opacity="0.95">
+    <g filter="url(#soft)" opacity="0.55">
+      <path fill="#e2e8f0" d="M40 0C18 0 0 18 0 40v46l8-8 8 8 8-8 8 8 8-8 8 8V40C40 18 62 0 40 0Z"/>
+    </g>
+    <path fill="#f8fafc" d="M40 0C18 0 0 18 0 40v46l8-8 8 8 8-8 8 8 8-8 8 8V40C40 18 62 0 40 0Z">
+      <animateTransform attributeName="transform" type="translate" values="0 0; 0 -6; 0 0" dur="3.2s" repeatCount="indefinite"/>
+    </path>
+    <circle cx="16" cy="34" r="4" fill="#0b1020"><animate attributeName="opacity" values="1;0.2;1" dur="3.2s" repeatCount="indefinite"/></circle>
+    <circle cx="34" cy="34" r="4" fill="#0b1020"><animate attributeName="opacity" values="1;0.2;1" dur="3.2s" repeatCount="indefinite"/></circle>
+  </g>
+
+  <text x="150" y="98" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="52" font-weight="700" fill="#f8fafc">FieldGhost</text>
+  <text x="152" y="128" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="17" fill="#94a3b8">detect &#8226; track &#8226; recover the ones the camera lost &#8226; ship straight to CVAT</text>
+
+  <!-- pipeline rail -->
+  <g transform="translate(64,168)" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12.5" fill="#cbd5e1">
+    <line x1="0" y1="0" x2="832" y2="0" stroke="#334155" stroke-width="2"/>
+    <line x1="0" y1="0" x2="832" y2="0" stroke="url(#glow)" stroke-width="2">
+      <animate attributeName="stroke-dasharray" values="0,832;180,832;0,832" dur="4s" repeatCount="indefinite"/>
+      <animate attributeName="stroke-dashoffset" values="0;-832" dur="4s" repeatCount="indefinite"/>
+    </line>
+    <g>
+      <circle cx="0" cy="0" r="4.5" fill="#38bdf8"/>
+      <text x="0" y="-12" text-anchor="middle">detect</text>
+    </g>
+    <g>
+      <circle cx="166" cy="0" r="4.5" fill="#38bdf8"/>
+      <text x="166" y="-12" text-anchor="middle">track</text>
+    </g>
+    <g>
+      <circle cx="333" cy="0" r="4.5" fill="#a78bfa"/>
+      <text x="333" y="-12" text-anchor="middle">recover ghosts</text>
+    </g>
+    <g>
+      <circle cx="500" cy="0" r="4.5" fill="#38bdf8"/>
+      <text x="500" y="-12" text-anchor="middle">merge</text>
+    </g>
+    <g>
+      <circle cx="666" cy="0" r="4.5" fill="#38bdf8"/>
+      <text x="666" y="-12" text-anchor="middle">upload</text>
+    </g>
+    <g>
+      <circle cx="832" cy="0" r="4.5" fill="#34d399"/>
+      <text x="832" y="-12" text-anchor="middle">QA</text>
+    </g>
+  </g>
+</svg>
