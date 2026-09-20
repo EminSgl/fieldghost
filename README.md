@@ -4,7 +4,7 @@
 
 ### Point it at a video and a CVAT task. Get back tracked players, not empty gaps.
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-38bdf8.svg)](LICENSE)
+[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-38bdf8.svg)](LICENSE)
 [![Works with](https://img.shields.io/badge/works%20with-CVAT-a78bfa)](https://github.com/cvat-ai/cvat)
 [![Skill for](https://img.shields.io/badge/skill%20for-Claude%20Code%20%7C%20Codex-34d399)](#-install)
 [![Made for](https://img.shields.io/badge/built%20on-a%20real%2080%20minute%20match-f8fafc)](#-the-honest-part)
@@ -165,4 +165,7 @@ on, we'd love to hear how it went.
 
 ## License
 
-[MIT](LICENSE)
+[PolyForm Noncommercial 1.0.0](LICENSE) — free to use, modify, and share for
+any noncommercial purpose (personal projects, research, education, hobby
+use). Commercial use requires a separate license from the copyright holder —
+open an issue or reach out if that's what you need.
