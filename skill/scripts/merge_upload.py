@@ -55,6 +55,7 @@ import sys
 import yaml
 
 from cvat_client import login, put_annotations, TokenExpired
+import reid_merge
 
 VIS_SPEC_ID_KEY = "spec_id"
 
@@ -108,13 +109,36 @@ def clip_to_task_frames(clip_cfg, tracks_path, window, frame_step, ghost_cfg):
                             "attributes": [a for a in s["attributes"] if not ghost_cfg or a["spec_id"] != ghost_cfg["spec_id"]]
                             + ghost_attr(s, ghost_cfg)})
     tracks = []
-    for tr in d["tracks"]:
+    for orig_idx, tr in enumerate(d["tracks"]):
         sh = [{**s, "frame": s["frame"] + off} for s in tr["shapes"]]
         keep = [s for s in sh if lo <= s["frame"] < hi]
         if not keep:
             continue
-        tracks.append(fix_track_attrs({**tr, "frame": keep[0]["frame"], "shapes": keep}, ghost_cfg))
+        fixed = fix_track_attrs({**tr, "frame": keep[0]["frame"], "shapes": keep}, ghost_cfg)
+        # tagged so a later re-id pass can look up this fragment's embedding
+        # (computed by embed.py against the clip's OWN, un-windowed track
+        # list) even though windowing may have dropped or renumbered others;
+        # stripped again in main() before anything is written out.
+        fixed["_clip"] = clip_cfg["name"]
+        fixed["_orig_idx"] = orig_idx
+        tracks.append(fixed)
     return shapes, tracks
+
+
+def load_embeddings(clips_dir, clips):
+    """clip name -> {orig_track_index (int) -> embedding vector}, only for
+    clips that have a `<name>_embeddings.json` next to their tracks file."""
+    out = {}
+    for c in clips:
+        path = os.path.join(clips_dir, f"{c['name']}_embeddings.json")
+        if os.path.exists(path):
+            raw = json.load(open(path, encoding="utf-8"))
+            out[c["name"]] = {int(k): v for k, v in raw.items()}
+    return out
+
+
+def strip_reid_tags(track):
+    return {k: v for k, v in track.items() if not k.startswith("_")}
 
 
 def split_for_job(shapes, tracks, start, stop):
@@ -166,6 +190,17 @@ def main():
     ap.add_argument("--username")
     ap.add_argument("--password")
     ap.add_argument("--exclude-boxes", help="JSON file of confirmed static-object exclusion boxes (see docstring)")
+    ap.add_argument("--reid", action="store_true",
+                     help="merge tracks that embed.py found to be the same subject into one persistent track "
+                          "(requires <clip_name>_embeddings.json next to each clip's tracks file in --clips-dir)")
+    ap.add_argument("--reid-threshold", type=float, default=0.85,
+                     help="cosine similarity above which two non-overlapping tracks are treated as the same subject. "
+                          "Lower merges more aggressively (fewer identities, more risk of merging two different "
+                          "people); higher is more conservative. There is no single correct value -- tune it by "
+                          "spot-checking a few merged identities in the CVAT UI on your own footage, the same way "
+                          "you'd tune any similarity threshold.")
+    ap.add_argument("--player-id-spec", type=int, default=None,
+                     help="CVAT attribute spec_id to stamp the persistent identity number onto each merged track")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -190,6 +225,23 @@ def main():
         print(f"clip {clip_cfg['name']}: window {window} shapes={len(s)} tracks={len(t)}")
         all_shapes += s
         all_tracks += t
+
+    if args.reid:
+        embeddings = load_embeddings(args.clips_dir, clips)
+
+        def embedding_of(track):
+            clip_emb = embeddings.get(track.get("_clip"))
+            return clip_emb.get(track.get("_orig_idx")) if clip_emb else None
+
+        all_tracks, reid_stats = reid_merge.match_and_merge(
+            all_tracks, embedding_of, threshold=args.reid_threshold, player_id_spec=args.player_id_spec)
+        print(f"re-id: {reid_stats['input_tracks']} fragment tracks -> "
+              f"{reid_stats['output_identities']} persistent identities "
+              f"({reid_stats['identities_with_multiple_fragments']} of them merged from multiple fragments, "
+              f"largest merged {reid_stats['largest_identity_fragment_count']}, "
+              f"{reid_stats['tracks_without_embedding']} fragments had no embedding to match on)")
+    else:
+        all_tracks = [strip_reid_tags(t) for t in all_tracks]
 
     all_tracks, removed = apply_exclusions(all_tracks, exclude_boxes)
     if exclude_boxes:

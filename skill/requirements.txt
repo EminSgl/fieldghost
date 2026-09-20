@@ -3,3 +3,4 @@ opencv-python>=4.8
 numpy>=1.24
 scipy>=1.11
 pyyaml>=6.0
+openvino>=2024.0  # only needed for embed.py if your re-id model is an OpenVINO IR (.xml/.bin) rather than .onnx

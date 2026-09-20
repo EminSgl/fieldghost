@@ -41,7 +41,8 @@ accident.
 flowchart LR
     A[GPU detect<br/><sub>ONNX / YOLO, checkpointed</sub>] --> B[Track<br/><sub>IoU + jersey-colour, Hungarian match</sub>]
     B --> C[Recover ghosts<br/><sub>zoom crop + re-detect on every gap</sub>]
-    C --> D[Merge clips<br/><sub>→ CVAT task frame numbers</sub>]
+    C --> I[Re-identify<br/><sub>appearance embedding, fewer duplicate IDs</sub>]
+    I --> D[Merge clips<br/><sub>→ CVAT task frame numbers</sub>]
     D --> E[Upload<br/><sub>PUT /jobs/&lt;id&gt;/annotations</sub>]
     E --> F{QA pass}
     F -->|candidate found| G[Visually confirm<br/>in the CVAT UI]
@@ -50,10 +51,11 @@ flowchart LR
     H --> E
 
     style C fill:#2e1065,stroke:#a78bfa,color:#f8fafc
+    style I fill:#0c2f4a,stroke:#38bdf8,color:#f8fafc
     style F fill:#1e293b,stroke:#38bdf8,color:#f8fafc
 ```
 
-Five stages, one video → one CVAT task:
+Six stages, one video → one CVAT task:
 
 1. **Detect** — GPU pass with an ONNX YOLO model, multi-scale tiling for
    small/distant subjects, checkpointed to disk every frame so a crash or a
@@ -62,9 +64,15 @@ Five stages, one video → one CVAT task:
    across occlusion gaps with the Hungarian algorithm.
 3. **Recover** — the part that gives this its name. Every gap gets one more
    real shot at being found before it's allowed to stay a ghost.
-4. **Merge & upload** — clip-local frame numbers → your CVAT task's global
+4. **Re-identify** — short-range tracking alone still gives every longer
+   occlusion a brand-new ID. This stage fingerprints each track by
+   appearance and merges the ones that are almost certainly the same real
+   player, cutting fragment count substantially — see
+   [below](#cutting-down-duplicate-ids) for what this does and doesn't
+   solve.
+5. **Merge & upload** — clip-local frame numbers → your CVAT task's global
    numbering, split at job boundaries, `PUT` straight to the API.
-5. **QA** — a heuristic flags *candidates* for static-object false positives
+6. **QA** — a heuristic flags *candidates* for static-object false positives
    (never auto-deletes), you visually confirm in the CVAT UI, and only
    confirmed objects get excluded — from a fresh rebuild, not an in-place
    edit.
@@ -108,6 +116,50 @@ ghost_attribute:
   resolved_value: "detected"
   unresolved_value: "unresolved_detection_gap"
 ```
+
+## Cutting down duplicate IDs
+
+Short-range tracking alone gives you a smooth track — right up until
+someone disappears into a ruck for eight seconds. Come back out the other
+side and, to the tracker, that's a brand-new person: on real match footage,
+expect on the order of 10-30x more raw tracks than there are actual players
+on the pitch.
+
+`embed.py` fingerprints every track by appearance (any image-embedding
+model works — a real person-re-ID network gives noticeably better results
+than a generic ImageNet classifier's output layer), and `merge_upload.py
+--reid` merges the ones that are almost certainly the same real player —
+provided their time ranges don't overlap, since nothing can be in two
+places on the pitch at once — into a single persistent track:
+
+```bash
+# a real person-re-ID model (recommended) -- e.g. Intel Open Model Zoo's
+# person-reidentification-retail-0288, an OpenVINO IR (.xml + .bin)
+python embed.py clip.mp4 clip_tracks.json clip_embeddings.json \
+    --model person-reidentification-retail-0288.xml \
+    --width 128 --height 256 --scale 1 --mean 0 0 0 --std 1 1 1
+
+python merge_upload.py config.yaml --clips-dir . --out-dir merged --reid --player-id-spec 27
+```
+
+**What this actually gets you, measured on real match footage:** 785 raw
+fragment tracks came down to somewhere in the 500s at a conservative
+threshold — a real reduction, not the ~30 real players on the pitch. Push
+the threshold looser and the count keeps dropping, but a new problem shows
+up instead: individual identities start silently absorbing dozens of
+different people, worst with teammates in identical kit. There's no
+threshold that gives you both a small count *and* correct identities from
+appearance alone — this is an honest limit of similarity-based re-ID on
+footage a retail-trained model was never tuned for, not a bug to tune away.
+
+Treat the output as "meaningfully fewer, cleaner tracks that still want a
+human glance in the CVAT UI," not "solved." Getting the rest of the way to
+one ID per real player reliably needs a re-ID model actually trained on
+this sport, or reading the printed jersey number instead of inferring
+identity from appearance — both real follow-on projects, not something
+this stage fakes silently. Full writeup, including why the matching uses
+complete-linkage instead of a running average (chaining is a real trap
+here), in [`skill/SKILL.md`](skill/SKILL.md#4-re-identify-players-across-the-whole-match-scriptsembedpy--scriptsreid_mergepy).
 
 ## The honest part
 

@@ -1,0 +1,602 @@
+<title>FieldGhost Viewer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0e16; --surface:#10151f; --surface-2:#171e2b; --surface-3:#1e2635;
+    --border:#232c3d; --border-hi:#324056;
+    --text:#e7ecf3; --text-dim:#8a97ab; --text-faint:#5b6577;
+    --accent:#38bdf8; --accent-dim:#1b425a;
+    --ghost:#b794f6; --ghost-dim:#3a2f57;
+    --good:#34d399; --warn:#fbbf24;
+    --mono:'JetBrains Mono',ui-monospace,Consolas,monospace;
+    --ui:'Inter',system-ui,-apple-system,sans-serif;
+  }
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme="dark"]){
+      --bg:#0a0e16; --surface:#10151f; --surface-2:#171e2b; --surface-3:#1e2635;
+      --border:#232c3d; --border-hi:#324056; --text:#e7ecf3; --text-dim:#8a97ab; --text-faint:#5b6577;
+    }
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}
+  body{background:var(--bg);color:var(--text);font-family:var(--ui);margin:0;min-height:100%}
+  ::selection{background:var(--accent-dim)}
+
+  .app{display:flex;flex-direction:column;height:100vh;min-height:640px;padding-inline:16px;gap:12px;padding-block:12px}
+
+  header.top{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:700;font-size:15px;letter-spacing:.2px;white-space:nowrap}
+  .brand .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+  .brand small{color:var(--text-dim);font-weight:500;font-size:12px}
+
+  .filebar{display:flex;gap:8px;flex:1;flex-wrap:wrap;align-items:center;justify-content:flex-end}
+  .filebtn{display:flex;align-items:center;gap:7px;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:8px;padding:7px 12px;font-size:12.5px;color:var(--text-dim);cursor:pointer;font-family:var(--ui);
+    transition:border-color .15s,color .15s}
+  .filebtn:hover{border-color:var(--border-hi);color:var(--text)}
+  .filebtn.loaded{color:var(--good);border-color:#1d4a3a}
+  .filebtn input{display:none}
+  .filebtn svg{width:14px;height:14px;flex:none}
+
+  .cfg{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-dim);font-family:var(--mono)}
+  .cfg input{width:48px;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;color:var(--text);
+    font-family:var(--mono);font-size:12px;padding:5px 6px;text-align:center}
+  .cfg input:focus{outline:none;border-color:var(--accent)}
+
+  main{display:flex;gap:12px;flex:1;min-height:0}
+
+  .stage{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px}
+  .stage-frame{position:relative;flex:1;min-height:0;background:#000;border:1px solid var(--border);border-radius:12px;
+    display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .videowrap{position:relative;max-width:100%;max-height:100%;line-height:0}
+  video{display:block;max-width:100%;max-height:100%;width:auto;height:auto}
+  canvas{position:absolute;left:0;top:0;pointer-events:none}
+
+  .empty{display:flex;flex-direction:column;align-items:center;gap:16px;padding:32px;text-align:center;color:var(--text-dim);
+    max-width:460px}
+  .empty h2{margin:0;color:var(--text);font-size:17px;font-weight:600}
+  .empty p{margin:0;font-size:13px;line-height:1.55}
+  .empty .drop{border:1.5px dashed var(--border-hi);border-radius:10px;padding:22px 26px;font-size:12.5px;color:var(--text-faint)}
+  .empty .drop.drag{border-color:var(--accent);color:var(--accent);background:var(--accent-dim)}
+  .mock{width:280px;height:auto}
+
+  .controls{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);
+    border-radius:10px;padding:9px 12px}
+  .iconbtn{background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:8px;
+    width:32px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none}
+  .iconbtn:hover{border-color:var(--border-hi);background:var(--surface-3)}
+  .iconbtn:disabled{opacity:.35;cursor:not-allowed}
+  .iconbtn svg{width:15px;height:15px}
+  .playbtn{width:36px;height:36px;background:var(--accent);border-color:var(--accent);color:#04141f}
+  .playbtn:hover{filter:brightness(1.08)}
+  .scrub{flex:1;display:flex;align-items:center;gap:10px;min-width:0}
+  .scrub input[type=range]{flex:1;accent-color:var(--accent)}
+  .timecode{font-family:var(--mono);font-size:12px;color:var(--text-dim);white-space:nowrap;font-variant-numeric:tabular-nums}
+  .timecode b{color:var(--text)}
+  select.rate{background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:7px;
+    font-size:12px;font-family:var(--mono);padding:5px 7px}
+  .ghostjump{display:flex;align-items:center;gap:6px;background:var(--ghost-dim);border:1px solid #4c3d78;color:var(--ghost);
+    border-radius:8px;padding:0 12px;height:32px;font-size:12px;font-family:var(--ui);font-weight:600;cursor:pointer;white-space:nowrap}
+  .ghostjump:hover{border-color:var(--ghost)}
+  .ghostjump:disabled{opacity:.35;cursor:not-allowed}
+  .ghostjump svg{width:13px;height:13px}
+
+  aside{width:280px;flex:none;display:flex;flex-direction:column;gap:10px;min-height:0}
+  .statgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .stat{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+  .stat .n{font-family:var(--mono);font-size:19px;font-weight:600;font-variant-numeric:tabular-nums}
+  .stat .l{font-size:10.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;margin-top:2px}
+  .stat.ghost .n{color:var(--ghost)}
+
+  .panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;display:flex;flex-direction:column;
+    flex:1;min-height:0}
+  .panel-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--border)}
+  .panel-head h3{margin:0;font-size:12px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em}
+  .solo{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-dim);cursor:pointer;user-select:none}
+  .solo input{accent-color:var(--accent)}
+  .tracklist{overflow-y:auto;flex:1}
+  .trow{display:flex;align-items:center;gap:9px;padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--surface-2);
+    font-size:12px}
+  .trow:hover{background:var(--surface-2)}
+  .trow.active{background:var(--surface-3)}
+  .swatch{width:9px;height:9px;border-radius:50%;flex:none}
+  .trow .meta{flex:1;min-width:0}
+  .trow .id{font-family:var(--mono);color:var(--text)}
+  .trow .len{color:var(--text-faint);font-size:10.5px}
+  .trow .gcount{font-family:var(--mono);font-size:10.5px;color:var(--ghost);background:var(--ghost-dim);
+    border-radius:5px;padding:1px 6px;flex:none}
+  .empty-list{padding:20px 14px;color:var(--text-faint);font-size:12px;text-align:center}
+
+  .legend{display:flex;gap:14px;font-size:11px;color:var(--text-dim);padding:10px 12px;border-top:1px solid var(--border)}
+  .legend span{display:flex;align-items:center;gap:6px}
+  .lswatch{width:16px;height:10px;border-radius:2px;flex:none}
+  .lswatch.solid{border:2px solid var(--accent)}
+  .lswatch.dashed{border:2px dashed var(--ghost)}
+
+  @media (max-width:760px){
+    main{flex-direction:column}
+    aside{width:100%}
+    .stage-frame{min-height:220px}
+  }
+</style>
+
+<div class="app">
+  <header class="top">
+    <div class="brand"><span class="dot"></span>FieldGhost <small>Viewer</small></div>
+    <div class="filebar">
+      <label class="filebtn" id="videoBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h11a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z"/><path d="m16 10 4.2-2.6a.8.8 0 0 1 1.2.7v7.8a.8.8 0 0 1-1.2.7L16 14"/></svg>
+        <span id="videoLabel">Load video</span>
+        <input type="file" accept="video/*" id="videoInput">
+      </label>
+      <label class="filebtn" id="jsonBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1Z"/><path d="M14 2v5h5"/></svg>
+        <span id="jsonLabel">Load CVAT annotations (.json)</span>
+        <input type="file" accept="application/json,.json" id="jsonInput">
+      </label>
+      <div class="cfg">
+        <span>fps</span><input type="number" id="fpsInput" value="30" min="1" max="240">
+        <span>step</span><input type="number" id="stepInput" value="5" min="1" max="60">
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="stage">
+      <div class="stage-frame" id="stageFrame">
+        <div class="empty" id="emptyState">
+          <svg class="mock" viewBox="0 0 280 158" fill="none">
+            <rect x="1" y="1" width="278" height="156" rx="8" fill="#0d1420" stroke="#232c3d"/>
+            <rect x="20" y="70" width="26" height="58" rx="2" fill="none" stroke="#38bdf8" stroke-width="1.6"/>
+            <text x="20" y="66" font-family="JetBrains Mono" font-size="8" fill="#38bdf8">#014</text>
+            <rect x="70" y="55" width="24" height="52" rx="2" fill="none" stroke="#38bdf8" stroke-width="1.6"/>
+            <text x="70" y="51" font-family="JetBrains Mono" font-size="8" fill="#38bdf8">#022</text>
+            <rect x="150" y="80" width="27" height="56" rx="2" fill="none" stroke="#b794f6" stroke-width="1.6" stroke-dasharray="3 2"/>
+            <text x="150" y="76" font-family="JetBrains Mono" font-size="8" fill="#b794f6">#031 ghost</text>
+            <rect x="210" y="60" width="22" height="50" rx="2" fill="none" stroke="#38bdf8" stroke-width="1.6"/>
+            <text x="210" y="56" font-family="JetBrains Mono" font-size="8" fill="#38bdf8">#040</text>
+            <text x="140" y="148" font-family="Inter" font-size="8.5" fill="#5b6577" text-anchor="middle">example frame — solid = detected, dashed = recovering</text>
+          </svg>
+          <h2>Load your clip and its tracks</h2>
+          <p>Pick the source video and the CVAT annotations JSON your FieldGhost run produced (a <code>job_&lt;id&gt;.json</code>, or any <code>{"shapes":[...],"tracks":[...]}</code> file). Everything stays in this browser tab — nothing is uploaded anywhere.</p>
+          <div class="drop" id="dropHint">or drag both files onto this window</div>
+        </div>
+        <div class="videowrap" id="videoWrap" hidden>
+          <video id="video" playsinline></video>
+          <canvas id="overlay"></canvas>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button class="iconbtn playbtn" id="playBtn" disabled title="Play / pause">
+          <svg id="playIcon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <button class="iconbtn" id="stepBack" disabled title="Previous sampled frame">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 19V5l-9 7 9 7Z"/><path d="M20 19V5"/></svg>
+        </button>
+        <button class="iconbtn" id="stepFwd" disabled title="Next sampled frame">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 5v14l9-7-9-7Z"/><path d="M4 5v14"/></svg>
+        </button>
+        <div class="scrub">
+          <input type="range" id="scrub" min="0" max="1000" value="0" step="1" disabled>
+          <span class="timecode"><b id="curTime">0:00</b> / <span id="durTime">0:00</span></span>
+        </div>
+        <span class="timecode">frame <b id="curFrame">–</b></span>
+        <select class="rate" id="rate" disabled>
+          <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+          <option value="1" selected>1×</option><option value="1.5">1.5×</option><option value="2">2×</option>
+        </select>
+        <button class="ghostjump" id="ghostJump" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a5 5 0 0 0-5 5v6l-2.5 3h15L17 13V7a5 5 0 0 0-5-5Z"/><circle cx="9.5" cy="9" r="1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="9" r="1" fill="currentColor" stroke="none"/></svg>
+          next ghost
+        </button>
+      </div>
+    </div>
+
+    <aside>
+      <div class="statgrid">
+        <div class="stat"><div class="n" id="statTracks">–</div><div class="l">tracks</div></div>
+        <div class="stat ghost"><div class="n" id="statGhosts">–</div><div class="l">unresolved ghosts</div></div>
+        <div class="stat"><div class="n" id="statFrames">–</div><div class="l">sampled frames</div></div>
+        <div class="stat"><div class="n" id="statLoose">–</div><div class="l">loose shapes</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Tracks</h3>
+          <label class="solo"><input type="checkbox" id="soloToggle" disabled>solo selected</label>
+        </div>
+        <div class="tracklist" id="trackList"><div class="empty-list">Load annotations to see tracks</div></div>
+        <div class="legend">
+          <span><span class="lswatch solid"></span>detected</span>
+          <span><span class="lswatch dashed"></span>ghost</span>
+        </div>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var video = document.getElementById('video');
+  var canvas = document.getElementById('overlay');
+  var ctx = canvas.getContext('2d');
+  var videoWrap = document.getElementById('videoWrap');
+  var emptyState = document.getElementById('emptyState');
+  var stageFrame = document.getElementById('stageFrame');
+
+  var fpsInput = document.getElementById('fpsInput');
+  var stepInput = document.getElementById('stepInput');
+
+  var playBtn = document.getElementById('playBtn');
+  var playIcon = document.getElementById('playIcon');
+  var stepBack = document.getElementById('stepBack');
+  var stepFwd = document.getElementById('stepFwd');
+  var scrub = document.getElementById('scrub');
+  var curTime = document.getElementById('curTime');
+  var durTime = document.getElementById('durTime');
+  var curFrame = document.getElementById('curFrame');
+  var rateSel = document.getElementById('rate');
+  var ghostJumpBtn = document.getElementById('ghostJump');
+  var soloToggle = document.getElementById('soloToggle');
+  var trackListEl = document.getElementById('trackList');
+
+  var statTracks = document.getElementById('statTracks');
+  var statGhosts = document.getElementById('statGhosts');
+  var statFrames = document.getElementById('statFrames');
+  var statLoose = document.getElementById('statLoose');
+
+  var videoLabel = document.getElementById('videoLabel');
+  var jsonLabel = document.getElementById('jsonLabel');
+  var videoBtn = document.getElementById('videoBtn');
+  var jsonBtn = document.getElementById('jsonBtn');
+
+  var PLAY_PATH = 'M8 5v14l11-7z';
+  var PAUSE_PATH = 'M7 5h4v14H7zM13 5h4v14h-4z';
+
+  var state = {
+    haveVideo: false,
+    haveAnnotations: false,
+    fps: 30,
+    step: 5,
+    tracks: [],          // [{idx, byFrame: Map(frame->shape), first, last, ghostCount, color}]
+    looseByFrame: null,  // Map(frame -> [shape,...])
+    maxFrame: 0,
+    ghostFrames: [],     // sorted unique sampled frames that contain >=1 ghost shape (any track)
+    selectedTrack: null,
+    soloMode: false,
+    rafId: null
+  };
+
+  function trackColor(idx){
+    var hue = (idx * 137.508) % 360;
+    return 'hsl(' + hue.toFixed(0) + ' 78% 62%)';
+  }
+
+  function fmtTime(s){
+    if (!isFinite(s)) return '0:00';
+    var m = Math.floor(s / 60), sec = Math.floor(s % 60);
+    return m + ':' + (sec < 10 ? '0' : '') + sec;
+  }
+
+  function currentSampledFrame(){
+    var native = Math.round(video.currentTime * state.fps);
+    return Math.round(native / state.step);
+  }
+
+  function sampledFrameToTime(f){
+    return (f * state.step) / state.fps;
+  }
+
+  // ---------- loading ----------
+
+  function loadVideoFile(file){
+    var url = URL.createObjectURL(file);
+    video.src = url;
+    state.haveVideo = true;
+    videoLabel.textContent = file.name;
+    videoBtn.classList.add('loaded');
+    maybeReveal();
+  }
+
+  function indexAnnotations(data){
+    var tracks = [];
+    var looseByFrame = new Map();
+    var maxFrame = 0;
+    var ghostFrameSet = new Set();
+
+    (data.tracks || []).forEach(function(tr, idx){
+      var byFrame = new Map();
+      var ghostCount = 0, first = Infinity, last = -Infinity;
+      (tr.shapes || []).forEach(function(s){
+        if (s.outside) return;
+        byFrame.set(s.frame, s);
+        if (s.frame < first) first = s.frame;
+        if (s.frame > last) last = s.frame;
+        if (s.frame > maxFrame) maxFrame = s.frame;
+        if (s.occluded) { ghostCount++; ghostFrameSet.add(s.frame); }
+      });
+      if (byFrame.size === 0) return;
+      tracks.push({
+        idx: idx, label: tr.label_id, byFrame: byFrame,
+        first: first, last: last, ghostCount: ghostCount,
+        color: trackColor(idx)
+      });
+    });
+
+    (data.shapes || []).forEach(function(s){
+      if (s.outside) return;
+      if (!looseByFrame.has(s.frame)) looseByFrame.set(s.frame, []);
+      looseByFrame.get(s.frame).push(s);
+      if (s.frame > maxFrame) maxFrame = s.frame;
+      if (s.occluded) ghostFrameSet.add(s.frame);
+    });
+
+    state.tracks = tracks;
+    state.looseByFrame = looseByFrame;
+    state.maxFrame = maxFrame;
+    state.ghostFrames = Array.from(ghostFrameSet).sort(function(a,b){ return a-b; });
+  }
+
+  function loadJsonFile(file){
+    var reader = new FileReader();
+    reader.onload = function(){
+      var data;
+      try { data = JSON.parse(reader.result); }
+      catch(e){ jsonLabel.textContent = 'Invalid JSON — try again'; return; }
+      indexAnnotations(data);
+      state.haveAnnotations = true;
+      jsonLabel.textContent = file.name;
+      jsonBtn.classList.add('loaded');
+      renderStats();
+      renderTrackList();
+      maybeReveal();
+    };
+    reader.readAsText(file);
+  }
+
+  function maybeReveal(){
+    if (state.haveVideo){
+      emptyState.hidden = true;
+      videoWrap.hidden = false;
+    }
+    var ready = state.haveVideo; // annotations are optional (still useful to scrub raw footage)
+    [playBtn, stepBack, stepFwd, scrub, rateSel, ghostJumpBtn].forEach(function(el){ el.disabled = !ready; });
+    soloToggle.disabled = !(state.haveAnnotations);
+    ghostJumpBtn.disabled = !(ready && state.ghostFrames.length);
+    // hiding the empty state reflows the video's rendered box size, so the
+    // canvas (sized off getBoundingClientRect at loadedmetadata time) can be
+    // stale by the time this runs -- resize again on the next couple of
+    // frames to catch the reflow whichever order load events fire in.
+    requestAnimationFrame(function(){ resizeCanvas(); draw(); });
+    setTimeout(function(){ resizeCanvas(); draw(); }, 150);
+  }
+
+  // ---------- stats + track list ----------
+
+  function renderStats(){
+    var totalGhosts = state.tracks.reduce(function(a,t){ return a + t.ghostCount; }, 0);
+    var looseCount = 0;
+    state.looseByFrame.forEach(function(v){ looseCount += v.length; });
+    statTracks.textContent = state.tracks.length;
+    statGhosts.textContent = totalGhosts;
+    statFrames.textContent = state.maxFrame + 1;
+    statLoose.textContent = looseCount;
+  }
+
+  function renderTrackList(){
+    if (!state.tracks.length){
+      trackListEl.innerHTML = '<div class="empty-list">No tracks in this file</div>';
+      return;
+    }
+    var frag = document.createDocumentFragment();
+    state.tracks
+      .slice()
+      .sort(function(a,b){ return a.first - b.first; })
+      .forEach(function(t){
+        var row = document.createElement('div');
+        row.className = 'trow';
+        row.dataset.idx = t.idx;
+        row.innerHTML =
+          '<span class="swatch" style="background:' + t.color + '"></span>' +
+          '<span class="meta"><span class="id">#' + String(t.idx).padStart(3,'0') + '</span> ' +
+          '<span class="len">frames ' + t.first + '–' + t.last + '</span></span>' +
+          (t.ghostCount ? '<span class="gcount">' + t.ghostCount + ' ghost</span>' : '');
+        row.addEventListener('click', function(){ selectTrack(t.idx, true); });
+        frag.appendChild(row);
+      });
+    trackListEl.innerHTML = '';
+    trackListEl.appendChild(frag);
+  }
+
+  function selectTrack(idx, seek){
+    state.selectedTrack = idx;
+    Array.prototype.forEach.call(trackListEl.children, function(row){
+      row.classList.toggle('active', Number(row.dataset.idx) === idx);
+    });
+    if (seek){
+      var t = state.tracks.find(function(t){ return t.idx === idx; });
+      if (t) video.currentTime = sampledFrameToTime(t.first);
+    }
+  }
+
+  // ---------- drawing ----------
+
+  function resizeCanvas(){
+    if (!video.videoWidth) return;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    var rect = video.getBoundingClientRect();
+    canvas.style.width = rect.width + 'px';
+    canvas.style.height = rect.height + 'px';
+  }
+
+  function draw(){
+    if (!canvas.width) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    var f = currentSampledFrame();
+    curFrame.textContent = f;
+
+    var list = state.soloMode && state.selectedTrack !== null
+      ? state.tracks.filter(function(t){ return t.idx === state.selectedTrack; })
+      : state.tracks;
+
+    list.forEach(function(t){
+      var s = t.byFrame.get(f);
+      if (!s) return;
+      drawBox(s.points, t.color, '#' + String(t.idx).padStart(3,'0'), s.occluded, t.idx === state.selectedTrack);
+    });
+
+    if (!state.soloMode){
+      var loose = state.looseByFrame.get(f);
+      if (loose) loose.forEach(function(s){ drawBox(s.points, '#e7ecf3', null, s.occluded, false); });
+    }
+  }
+
+  function drawBox(points, color, label, ghost, highlighted){
+    var x1=points[0], y1=points[1], x2=points[2], y2=points[3];
+    ctx.save();
+    ctx.strokeStyle = ghost ? '#b794f6' : color;
+    ctx.lineWidth = highlighted ? 3.5 : 2;
+    if (ghost) ctx.setLineDash([7, 5]);
+    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    ctx.restore();
+    if (label){
+      ctx.save();
+      ctx.font = '600 12px JetBrains Mono, monospace';
+      var text = label + (ghost ? ' ghost' : '');
+      var w = ctx.measureText(text).width + 8;
+      ctx.fillStyle = ghost ? '#b794f6' : color;
+      ctx.fillRect(x1, Math.max(0, y1 - 17), w, 16);
+      ctx.fillStyle = '#04141f';
+      ctx.fillText(text, x1 + 4, Math.max(12, y1 - 5));
+      ctx.restore();
+    }
+  }
+
+  function loop(){
+    draw();
+    scrub.value = video.duration ? (video.currentTime / video.duration) * 1000 : 0;
+    curTime.textContent = fmtTime(video.currentTime);
+    if (!video.paused && !video.ended){
+      state.rafId = requestAnimationFrame(loop);
+    }
+  }
+
+  // ---------- controls ----------
+
+  video.addEventListener('loadedmetadata', function(){
+    resizeCanvas();
+    durTime.textContent = fmtTime(video.duration);
+    draw();
+  });
+  window.addEventListener('resize', function(){ resizeCanvas(); draw(); });
+  if (window.ResizeObserver){
+    new ResizeObserver(function(){ resizeCanvas(); draw(); }).observe(video);
+  }
+
+  playBtn.addEventListener('click', function(){
+    if (video.paused) video.play(); else video.pause();
+  });
+  video.addEventListener('play', function(){
+    playIcon.innerHTML = '<path d="' + PAUSE_PATH + '"/>';
+    state.rafId = requestAnimationFrame(loop);
+  });
+  video.addEventListener('pause', function(){
+    playIcon.innerHTML = '<path d="' + PLAY_PATH + '"/>';
+    if (state.rafId) cancelAnimationFrame(state.rafId);
+    draw();
+  });
+  video.addEventListener('seeked', draw);
+
+  scrub.addEventListener('input', function(){
+    if (!video.duration) return;
+    video.currentTime = (scrub.value / 1000) * video.duration;
+    draw();
+  });
+
+  stepBack.addEventListener('click', function(){
+    video.pause();
+    video.currentTime = Math.max(0, sampledFrameToTime(currentSampledFrame() - 1));
+    draw();
+  });
+  stepFwd.addEventListener('click', function(){
+    video.pause();
+    video.currentTime = sampledFrameToTime(currentSampledFrame() + 1);
+    draw();
+  });
+
+  rateSel.addEventListener('change', function(){ video.playbackRate = Number(rateSel.value); });
+
+  fpsInput.addEventListener('change', function(){
+    state.fps = Math.max(1, Number(fpsInput.value) || 30); draw();
+  });
+  stepInput.addEventListener('change', function(){
+    state.step = Math.max(1, Number(stepInput.value) || 5); draw();
+  });
+
+  soloToggle.addEventListener('change', function(){
+    state.soloMode = soloToggle.checked;
+    if (state.soloMode && state.selectedTrack === null && state.tracks.length){
+      selectTrack(state.tracks[0].idx, false);
+    }
+    draw();
+  });
+
+  ghostJumpBtn.addEventListener('click', function(){
+    var cur = currentSampledFrame();
+    var pool = state.ghostFrames;
+    if (state.soloMode && state.selectedTrack !== null){
+      var t = state.tracks.find(function(t){ return t.idx === state.selectedTrack; });
+      pool = [];
+      if (t) t.byFrame.forEach(function(s, f){ if (s.occluded) pool.push(f); });
+      pool.sort(function(a,b){ return a-b; });
+    }
+    var next = pool.find(function(f){ return f > cur; });
+    if (next === undefined) next = pool[0];
+    if (next !== undefined){
+      video.pause();
+      video.currentTime = sampledFrameToTime(next);
+      draw();
+    }
+  });
+
+  document.getElementById('videoInput').addEventListener('change', function(e){
+    if (e.target.files[0]) loadVideoFile(e.target.files[0]);
+  });
+  document.getElementById('jsonInput').addEventListener('change', function(e){
+    if (e.target.files[0]) loadJsonFile(e.target.files[0]);
+  });
+
+  // drag & drop anywhere on the stage
+  ['dragover','drop'].forEach(function(evt){
+    document.addEventListener(evt, function(e){ e.preventDefault(); });
+  });
+  document.addEventListener('dragover', function(){ stageFrame.style.borderColor = 'var(--accent)'; });
+  document.addEventListener('dragleave', function(){ stageFrame.style.borderColor = 'var(--border)'; });
+  document.addEventListener('drop', function(e){
+    stageFrame.style.borderColor = 'var(--border)';
+    var files = Array.from(e.dataTransfer.files || []);
+    files.forEach(function(f){
+      if (f.type.indexOf('video') === 0) loadVideoFile(f);
+      else if (f.name.endsWith('.json') || f.type === 'application/json') loadJsonFile(f);
+    });
+  });
+
+  try {
+    var saved = JSON.parse(localStorage.getItem('fieldghost-viewer-cfg') || '{}');
+    if (saved.fps) fpsInput.value = saved.fps;
+    if (saved.step) stepInput.value = saved.step;
+    state.fps = Number(fpsInput.value); state.step = Number(stepInput.value);
+  } catch(e){}
+  [fpsInput, stepInput].forEach(function(el){
+    el.addEventListener('change', function(){
+      try { localStorage.setItem('fieldghost-viewer-cfg', JSON.stringify({fps: fpsInput.value, step: stepInput.value})); }
+      catch(e){}
+    });
+  });
+})();
+</script>

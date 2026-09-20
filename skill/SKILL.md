@@ -1,6 +1,6 @@
 ---
 name: fieldghost
-description: Runs a full sports-video-to-CVAT annotation pipeline -- GPU person/object detection, occlusion-aware multi-object tracking, gap recovery for occluded subjects, and upload to CVAT (Computer Vision Annotation Tool) task jobs via its REST API -- then helps QA and clean up false-positive "ghost" labels (static field furniture like corner flags or poles mislabeled as people) through a visually-verified removal workflow. Use this skill whenever the user wants to auto-annotate a sports video (or any fixed-camera video with a CVAT task already set up) with tracked bounding boxes: phrases like "label this match", "track the players", "detect and track in CVAT", "upload annotations to my CVAT task/job", "auto-track this video", or "these boxes/labels look wrong, can we clean them up" (for a task this skill or a similar pipeline produced) should all trigger it, even if the user doesn't say "fieldghost" or "pipeline" explicitly. Also use it if the user is debugging a CVAT upload getting 403'd, a Cloudflare block on a CVAT API call, or ghost/occluded box handling in CVAT tracks.
+description: Runs a full sports-video-to-CVAT annotation pipeline -- GPU person/object detection, occlusion-aware multi-object tracking, gap recovery for occluded subjects, appearance-based re-identification so each real player keeps ONE persistent track ID across the whole match instead of a new one every time they're re-detected, and upload to CVAT (Computer Vision Annotation Tool) task jobs via its REST API -- then helps QA and clean up false-positive "ghost" labels (static field furniture like corner flags or poles mislabeled as people) through a visually-verified removal workflow. Use this skill whenever the user wants to auto-annotate a sports video (or any fixed-camera video with a CVAT task already set up) with tracked bounding boxes: phrases like "label this match", "track the players", "detect and track in CVAT", "upload annotations to my CVAT task/job", "auto-track this video", "why does this player keep getting a new ID/label", "keep the same number/ID for the same player", or "these boxes/labels look wrong, can we clean them up" (for a task this skill or a similar pipeline produced) should all trigger it, even if the user doesn't say "fieldghost" or "pipeline" explicitly. Also use it if the user is debugging a CVAT upload getting 403'd, a Cloudflare block on a CVAT API call, or ghost/occluded box handling in CVAT tracks.
 ---
 
 # FieldGhost
@@ -81,7 +81,7 @@ so you don't have to.
 
 ## The pipeline, stage by stage
 
-Run stages 1-4 once per clip; stage 5 once for the whole task.
+Run stages 1-4 once per clip; stages 5-6 once for the whole task.
 
 ### 1. Detect (`scripts/detect.py`)
 
@@ -112,11 +112,78 @@ jumps, and any occlusion gap that recovery could NOT resolve, still marked
 as a ghost box). Report the summary line it prints -- recovered count vs
 still-ghost count is the single most useful health metric for a clip.
 
-### 4. Merge + upload (`scripts/merge_upload.py`)
+### 4. Re-identify players across the whole match (`scripts/embed.py` + `scripts/reid_merge.py`)
+
+Optional but usually what the user actually wants when they ask for
+"tracking": without this stage, ordinary tracking (stages 2-3) only bridges
+SHORT gaps, so every longer occlusion -- a ruck, a player leaving frame for
+a minute -- silently starts a brand-new track ID for the same real person.
+On real match footage this is not a rare edge case: expect on the order of
+10-30x more raw tracks than there are actual players on the pitch. This
+stage is what turns that back into one persistent ID per player.
+
+For each clip, compute one appearance embedding per track:
+
+```
+python embed.py <clip.mp4> <clip_prefix>_tracks.json <clip_prefix>_embeddings.json \
+    --model <embedding_model.onnx> --input-name <input_tensor_name> [--samples 5]
+```
+
+Any model that maps an image to a fixed-size vector works -- a real
+person-re-ID network (e.g. an OSNet export) gives the best results,
+especially telling apart players on the same team in identical kit; a
+generic ImageNet classifier's output layer is a usable fallback if that's
+all you have (ask the user which they have before picking one; don't
+silently assume). This step reads video frames one at a time per sampled
+box, so it's noticeably slower than the earlier stages on a long clip --
+tell the user roughly how long before starting, and it's fine to run it
+after everything else (order relative to merge doesn't matter, only that
+it happens before the `--reid` merge step below).
+
+Then, as part of the merge (see stage 5), pass `--reid` and it merges
+tracks across clips into persistent identities automatically. Report the
+one-line summary `reid_merge.match_and_merge` prints -- fragment count
+before vs. persistent identity count after is the number the user actually
+cares about.
+
+**Be upfront about what this does and doesn't get you.** This is an
+appearance-similarity heuristic, not ground truth, and on real match
+footage tested during development it did NOT collapse cleanly down to one
+ID per real player -- it took 785 raw fragment tracks down to roughly
+500-550 persistent identities at a conservative threshold (~0.85-0.90
+cosine), a real improvement but nowhere near the ~30 actual players on the
+pitch. Push the threshold lower and the fragment count drops further, but a
+new failure mode replaces it: a handful of identities start silently
+absorbing dozens of genuinely different people (same-kit teammates
+especially) into one ID. `reid_merge.py`'s complete-linkage matching (a
+candidate must resemble every existing exemplar of an identity, not just a
+blurred running average) blunts this but does not eliminate it -- there is
+no threshold in between that gets you both a small fragment count AND
+correct identities with a similarity heuristic alone, at least not with a
+retail-domain re-ID model looking at outdoor sports footage it wasn't
+trained on.
+
+Tell the user this plainly: this stage meaningfully reduces track clutter
+and gets some real re-appearances right, but a same-kit team's individual
+players will still fragment across multiple IDs, and it needs a human
+spot-checking merged identities in the CVAT UI, not blind trust. Getting
+all the way to one ID per real player reliably needs either a re-ID model
+actually fine-tuned on this sport/footage, or a jersey-number OCR pass
+(read the real printed number instead of inferring identity from
+appearance) -- both are real, larger follow-on projects, not something to
+attempt silently as part of this stage.
+
+### 5. Merge + upload (`scripts/merge_upload.py`)
 
 ```
 python merge_upload.py config.yaml --clips-dir <dir_with_*_tracks.json> --out-dir <merged_dir>
 ```
+
+Add `--reid` (see stage 4) to merge fragmented tracks into persistent player
+identities as part of this step -- it needs `<clip_name>_embeddings.json`
+next to each clip's tracks file in `--clips-dir`. Add `--player-id-spec <id>`
+if the user wants the persistent identity number stamped as a visible CVAT
+attribute on each track, not just reflected in there being fewer tracks.
 
 Always run this WITHOUT `--upload` first and look at the printed per-job
 shape/track counts -- do they look plausible for the footage? Then, **stop
@@ -127,14 +194,14 @@ point where the pipeline touches shared state on the CVAT server, and a
 
 ```
 python merge_upload.py config.yaml --clips-dir <dir> --out-dir <merged_dir> \
-    --upload --username <user> --password <pass>
+    --reid --upload --username <user> --password <pass>
 ```
 
 (or `--token <token>` if they already have one). If you get a `TokenExpired`
 error on upload, that's expected sometimes -- just re-run with fresh
 credentials, don't treat it as a pipeline failure.
 
-### 5. QA: find and remove false-positive "ghost object" labels
+### 6. QA: find and remove false-positive "ghost object" labels
 
 Read this section in full before touching anything here -- it's the part
 most likely to go wrong if rushed.
