@@ -173,6 +173,39 @@ actually fine-tuned on this sport/footage, or a jersey-number OCR pass
 appearance) -- both are real, larger follow-on projects, not something to
 attempt silently as part of this stage.
 
+### 4.5 Team/role classification (`scripts/colorfeat.py` + `scripts/classify_roles.py`)
+
+Optional, and separate from re-ID (stage 4) on purpose: a re-ID embedding is
+trained to recognize the same PERSON despite appearance changes, which makes
+it a poor tool for the opposite job of telling two DIFFERENT people apart by
+what they're wearing. For each clip, extract a jersey-color feature instead:
+
+```
+python colorfeat.py <clip.mp4> <clip_prefix>_tracks.json <clip_prefix>_colorfeat.json [--samples 6]
+```
+
+Cheap, deterministic, no model -- crops the jersey region, masks out pitch
+green and lighting extremes, and summarizes hue/saturation as a clustering
+feature. Then, as part of the merge (stage 5), pass `--classify-roles
+--role-attr-spec <id>` and it clusters every track (or re-id-merged identity)
+into `team_a` / `team_b` / `uncertain` using k=3 k-means on color -- k=3, not
+k=2, because a third genuinely distinct kit color (e.g. a referee) otherwise
+has nowhere to go but whichever team centroid is nearest and silently joins a
+team. The two largest clusters become the teams; the smallest, plus any track
+too far from its own cluster's centroid, becomes `uncertain`.
+
+**This does not attempt a further `referee`/`staff` split.** Tested on real
+rugby footage: referees are commonly in all-black or another muted color,
+not reliably distinguishable from a team in a similar dark kit using color
+alone, and the `uncertain` bucket in practice is dominated by ambiguous crops
+(motion blur, tackle pile-ups, misdetected static objects) rather than clean
+shots of match officials. Report `uncertain` counts to the user as "needs a
+human look," not as "these are the referees."
+
+`team_a`/`team_b` are arbitrary labels with no color hint given -- nothing in
+a single match tells you which cluster is the "home" side. Tell the user this
+before they read anything into which label a given cluster got.
+
 ### 5. Merge + upload (`scripts/merge_upload.py`)
 
 ```
@@ -183,7 +216,11 @@ Add `--reid` (see stage 4) to merge fragmented tracks into persistent player
 identities as part of this step -- it needs `<clip_name>_embeddings.json`
 next to each clip's tracks file in `--clips-dir`. Add `--player-id-spec <id>`
 if the user wants the persistent identity number stamped as a visible CVAT
-attribute on each track, not just reflected in there being fewer tracks.
+attribute on each track, not just reflected in there being fewer tracks. Add
+`--classify-roles --role-attr-spec <id>` (see stage 4.5) to stamp a
+team_a/team_b/uncertain role attribute too -- it needs
+`<clip_name>_colorfeat.json` next to each clip's tracks file in
+`--clips-dir`.
 
 Always run this WITHOUT `--upload` first and look at the printed per-job
 shape/track counts -- do they look plausible for the footage? Then, **stop
@@ -246,6 +283,17 @@ So, for every candidate:
    files, a box you got even slightly wrong (too wide, wrong spot) costs
    nothing to fix -- adjust the box and re-run, you're never patching
    already-damaged data.
+
+A box only ever excludes a track that stays inside it for its ENTIRE
+measured lifetime, never just a track whose *average* position happens to
+land inside it. A confirmed box marks a pole's fixed screen position, and a
+real pole fragment never leaves it; a moving player's trajectory average can
+still land inside the same box just because their path happened to cross it
+(most visibly: someone running in from a frame edge, straight through where
+a pole sits on screen). Averaging used to wrongly drop exactly that case --
+if a legitimately-tracked, clearly-moving subject goes missing from the
+upload after adding an exclusion box, that mismatch is the first thing to
+check, not the detector.
 
 **Never skip step 1-2 and remove candidates in bulk based on the heuristic
 alone.** If you're tempted to because there are a lot of candidates: that's
