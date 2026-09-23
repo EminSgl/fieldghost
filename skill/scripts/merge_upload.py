@@ -56,6 +56,7 @@ import yaml
 
 from cvat_client import login, put_annotations, TokenExpired
 import reid_merge
+import classify_roles
 
 VIS_SPEC_ID_KEY = "spec_id"
 
@@ -141,6 +142,48 @@ def strip_reid_tags(track):
     return {k: v for k, v in track.items() if not k.startswith("_")}
 
 
+def load_colorfeat(clips_dir, clips):
+    """clip name -> {orig_track_index (int) -> colorfeat dict}, only for
+    clips that have a `<name>_colorfeat.json` next to their tracks file."""
+    out = {}
+    for c in clips:
+        path = os.path.join(clips_dir, f"{c['name']}_colorfeat.json")
+        if os.path.exists(path):
+            raw = json.load(open(path, encoding="utf-8"))
+            out[c["name"]] = {int(k): v for k, v in raw.items()}
+    return out
+
+
+def group_colorfeat(group, colorfeat):
+    """Average the colorfeat readings of every fragment in a (possibly
+    re-id-merged) group of original tracks, weighted by how many samples
+    each fragment's own reading was built from."""
+    readings = []
+    for tr in group:
+        clip_cf = colorfeat.get(tr.get("_clip"))
+        cf = clip_cf.get(tr.get("_orig_idx")) if clip_cf else None
+        if cf is not None:
+            readings.append(cf)
+    if not readings:
+        return None
+    total_n = sum(r["n"] for r in readings)
+    if total_n == 0:
+        return None
+    return {
+        "hue_cos": sum(r["hue_cos"] * r["n"] for r in readings) / total_n,
+        "hue_sin": sum(r["hue_sin"] * r["n"] for r in readings) / total_n,
+        "sat": sum(r["sat"] * r["n"] for r in readings) / total_n,
+        "val": sum(r["val"] * r["n"] for r in readings) / total_n,
+        "n": total_n,
+    }
+
+
+def stamp_role(track, role, role_spec_id):
+    track["attributes"] = [a for a in track.get("attributes", []) if a["spec_id"] != role_spec_id]
+    track["attributes"].append({"spec_id": role_spec_id, "value": role})
+    return track
+
+
 def split_for_job(shapes, tracks, start, stop):
     js = [s for s in shapes if start <= s["frame"] <= stop]
     jt = []
@@ -156,26 +199,30 @@ def split_for_job(shapes, tracks, start, stop):
     return js, jt
 
 
-def track_center(track):
-    meas = [s for s in track["shapes"] if not s["outside"]]
-    if not meas:
-        return None
-    cx = sum((s["points"][0] + s["points"][2]) / 2 for s in meas) / len(meas)
-    cy = sum((s["points"][1] + s["points"][3]) / 2 for s in meas) / len(meas)
-    return cx, cy
+def shape_centers(track):
+    return [((s["points"][0] + s["points"][2]) / 2, (s["points"][1] + s["points"][3]) / 2)
+            for s in track["shapes"] if not s["outside"]]
 
 
 def apply_exclusions(tracks, boxes):
+    """Drop a track only if it stays inside ONE exclusion box for its ENTIRE
+    measured lifetime. A confirmed box marks a pole's fixed screen position;
+    a real pole fragment never leaves it. A moving player merely passing
+    through that spot has an average centre that can land inside the box too
+    (its trajectory's midpoint), which used to get the whole track wrongly
+    excluded even though most of its shapes are far outside the box -- e.g.
+    a player running in from the frame edge whose path crosses a pole."""
     if not boxes:
         return tracks, 0
     kept, removed = [], 0
     for tr in tracks:
-        c = track_center(tr)
-        if c is not None:
-            cx, cy = c
-            if any(b["x_lo"] <= cx <= b["x_hi"] and b["y_lo"] <= cy <= b["y_hi"] for b in boxes):
-                removed += 1
-                continue
+        centers = shape_centers(tr)
+        if centers and any(
+            all(b["x_lo"] <= cx <= b["x_hi"] and b["y_lo"] <= cy <= b["y_hi"] for cx, cy in centers)
+            for b in boxes
+        ):
+            removed += 1
+            continue
         kept.append(tr)
     return kept, removed
 
@@ -201,7 +248,17 @@ def main():
                           "you'd tune any similarity threshold.")
     ap.add_argument("--player-id-spec", type=int, default=None,
                      help="CVAT attribute spec_id to stamp the persistent identity number onto each merged track")
+    ap.add_argument("--classify-roles", action="store_true",
+                     help="assign each track a team_a/team_b/uncertain role from jersey color "
+                          "(requires <clip_name>_colorfeat.json next to each clip's tracks file in --clips-dir, "
+                          "see colorfeat.py)")
+    ap.add_argument("--role-attr-spec", type=int, default=None,
+                     help="CVAT attribute spec_id to stamp the role onto each track (required with --classify-roles)")
     args = ap.parse_args()
+
+    if args.classify_roles and args.role_attr_spec is None:
+        print("--classify-roles requires --role-attr-spec <id>", file=sys.stderr)
+        sys.exit(1)
 
     cfg = load_config(args.config)
     cvat = cfg["cvat"]
@@ -233,7 +290,7 @@ def main():
             clip_emb = embeddings.get(track.get("_clip"))
             return clip_emb.get(track.get("_orig_idx")) if clip_emb else None
 
-        all_tracks, reid_stats = reid_merge.match_and_merge(
+        all_tracks, groups, reid_stats = reid_merge.match_and_merge(
             all_tracks, embedding_of, threshold=args.reid_threshold, player_id_spec=args.player_id_spec)
         print(f"re-id: {reid_stats['input_tracks']} fragment tracks -> "
               f"{reid_stats['output_identities']} persistent identities "
@@ -241,7 +298,21 @@ def main():
               f"largest merged {reid_stats['largest_identity_fragment_count']}, "
               f"{reid_stats['tracks_without_embedding']} fragments had no embedding to match on)")
     else:
-        all_tracks = [strip_reid_tags(t) for t in all_tracks]
+        # every track is its own one-member "group" -- keeps classify-roles'
+        # code path identical whether or not --reid ran first
+        groups = [[t] for t in all_tracks]
+
+    if args.classify_roles:
+        colorfeat = load_colorfeat(args.clips_dir, clips)
+        roles, role_stats = classify_roles.classify(
+            groups, lambda g: group_colorfeat(g, colorfeat))
+        for track, role in zip(all_tracks, roles):
+            stamp_role(track, role, args.role_attr_spec)
+        print(f"roles: {role_stats['team_a']} team_a, {role_stats['team_b']} team_b, "
+              f"{role_stats['uncertain']} uncertain "
+              f"({role_stats['unknown']} tracks had no usable color reading)")
+
+    all_tracks = [strip_reid_tags(t) for t in all_tracks]
 
     all_tracks, removed = apply_exclusions(all_tracks, exclude_boxes)
     if exclude_boxes:

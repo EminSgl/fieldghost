@@ -161,6 +161,23 @@ this stage fakes silently. Full writeup, including why the matching uses
 complete-linkage instead of a running average (chaining is a real trap
 here), in [`skill/SKILL.md`](skill/SKILL.md#4-re-identify-players-across-the-whole-match-scriptsembedpy--scriptsreid_mergepy).
 
+## Team classification
+
+Separate from re-ID on purpose: telling the same person apart across gaps
+and telling two *different* people apart by kit color are opposite jobs.
+`colorfeat.py` extracts a cheap hue/saturation feature from the jersey
+region (pitch green and lighting extremes masked out), and
+`merge_upload.py --classify-roles` k-means clusters it into `team_a` /
+`team_b` / `uncertain` — k=3, not k=2, so a third genuinely distinct kit
+color (a referee, most often) has somewhere to go instead of silently
+joining whichever team centroid is nearest.
+
+It deliberately stops at `uncertain` rather than guessing `referee` vs
+`staff`: tested on real rugby footage, referees are commonly in all-black or
+another muted color that isn't reliably distinguishable from a team in a
+similar dark kit by color alone, and `uncertain` in practice is dominated by
+ambiguous crops (motion blur, tackle pile-ups), not clean official shots.
+
 ## The honest part
 
 The QA pass includes a heuristic that flags *candidate* false positives —
@@ -194,6 +211,10 @@ So your agent doesn't have to rediscover them:
 - `PUT /annotations` is a **full replace**, not a merge — which is exactly
   why every stage here is rebuild-from-source, not edit-in-place.
 - Long GPU runs get **checkpointed**, not restarted, after a crash or reboot.
+- An exclusion box only drops a track that stays inside it for its **entire**
+  measured lifetime, never just a track whose *average* position lands
+  inside it — otherwise a moving subject whose path merely crosses a pole's
+  screen position gets wrongly excluded whole.
 
 Full detail in [`skill/references/cvat-api-notes.md`](skill/references/cvat-api-notes.md).
 

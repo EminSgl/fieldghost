@@ -132,6 +132,7 @@ def match_and_merge(tracks, embedding_of, threshold=0.75, player_id_spec=None, m
             })
 
     merged = [build_merged_track(g["members"], pid, player_id_spec) for pid, g in enumerate(gallery)]
+    groups = [g["members"] for g in gallery]  # merged[i] was built from groups[i] -- same order, same length
     sizes = [len(g["members"]) for g in gallery]
     stats = {
         "input_tracks": len(tracks),
@@ -140,4 +141,4 @@ def match_and_merge(tracks, embedding_of, threshold=0.75, player_id_spec=None, m
         "largest_identity_fragment_count": max(sizes, default=0),
         "identities_with_multiple_fragments": sum(1 for n in sizes if n > 1),
     }
-    return merged, stats
+    return merged, groups, stats
