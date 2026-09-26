@@ -123,9 +123,11 @@ assume:
    processes are actually holding the GPU right now, which is a much less
    ambiguous signal than parsing a process tree (background-task wrapper
    shells nest in ways that can look like duplicates when they aren't).
-   Likewise, a Python venv on Windows shows TWO `python.exe` per worker:
-   the venv's `Scripts\python.exe` launcher plus the real interpreter as
-   its child (check `ParentProcessId`) -- that's one run, not a duplicate.
+   Likewise, don't count `python.exe` names alone: a standard Windows venv's
+   `Scripts\\python.exe` is the interpreter entry point, not a guaranteed
+   launcher/child pair. Use `ParentProcessId` and command lines to decide whether
+   two entries belong to one worker; otherwise a real duplicate can be mistaken
+   for the venv.
 4. If a checkpoint file (`<clip>.json.part`) could have been written to by
    more than one process -- i.e. you skipped step 1-2 even once during that
    run's lifetime, or you're not sure -- don't trust it. A quick sanity
