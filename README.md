@@ -215,6 +215,12 @@ So your agent doesn't have to rediscover them:
   measured lifetime, never just a track whose *average* position lands
   inside it — otherwise a moving subject whose path merely crosses a pole's
   screen position gets wrongly excluded whole.
+- A "killed" background detect/refine run isn't necessarily dead — on
+  Windows especially, the child process can survive its own wrapper.
+  Verify (`nvidia-smi --query-compute-apps=...`, not just the OS process
+  list) and force-kill the whole tree before resuming, or you can end up
+  with several copies fighting over the GPU and corrupting the same
+  `.json.part` checkpoint file with unsynchronized concurrent writes.
 
 Full detail in [`skill/references/cvat-api-notes.md`](skill/references/cvat-api-notes.md).
 
