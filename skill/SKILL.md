@@ -79,6 +79,66 @@ missing pieces. Never restart a stage that's already checkpointed as done --
 besides wasting GPU time, `detect.py`'s resume logic is there specifically
 so you don't have to.
 
+## A killed background run may not actually be dead -- verify before you resume
+
+If you're driving `detect.py`/`refine.py` as a background process (an agent
+harness's own "kill this task, it's using too much memory" reaper, a crashed
+terminal, a closed laptop lid) and you're told the task was stopped: **do
+not trust that and just relaunch.** On at least one real run, an agent's
+background-task manager repeatedly killed a detection run for running the
+system out of memory, reported it as killed, and the agent just relaunched
+it each time on the assumption the slate was clean. It wasn't: on Windows in
+particular, killing the top-level shell wrapper does not reliably kill the
+`python.exe` child (or even the inner `bash.exe` that spawned it) -- it can
+keep running, orphaned, invisible to the harness's own tracking. Every
+"just restart" stacked ANOTHER copy on top of the surviving ones. Six of
+them ended up running simultaneously, all fighting over one small laptop
+GPU's ~4GB of VRAM (which is exactly the kind of contention that produces
+more out-of-memory pressure, not less -- a vicious cycle), AND, worse, all
+independently `open(part_path, "a")`-appending to the *same* `.json.part`
+checkpoint file with no coordination between them. The result: a checkpoint
+file with far more lines than the clip could possibly have real sampled
+frames (7994 lines for a clip whose true budget was 5400) -- silently
+corrupted, not obviously broken, the kind of thing that would have polluted
+a "finished" detection pass with duplicate/conflicting frame data.
+
+Before resuming ANY interrupted detect/refine run, actually check, don't
+assume:
+
+1. List every process that could be a leftover worker, filtering by command
+   line (not just name) so you catch the whole tree -- e.g. on Windows,
+   `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match
+   'detect.py|refine.py|run_pipeline' }`. Do this even (especially) right
+   after a harness reports the task "killed" -- that status describes what
+   the harness *tried* to do, not a verified fact about the OS process
+   table.
+2. If anything turns up, force-kill the whole tree, not just the PID you
+   were told about -- a plain `Stop-Process` on one PID can leave its
+   children running. On Windows, `taskkill /F /T /PID <pid>` (the `/T`
+   kills the tree) is far more reliable than killing PIDs one at a time.
+   Re-run the same query and confirm it comes back empty before moving on.
+3. For a shared GPU workload specifically, cross-check with the GPU itself,
+   not just the OS process list -- `nvidia-smi --query-compute-apps=pid,
+   used_memory,process_name --format=csv` tells you exactly how many
+   processes are actually holding the GPU right now, which is a much less
+   ambiguous signal than parsing a process tree (background-task wrapper
+   shells nest in ways that can look like duplicates when they aren't).
+   Likewise, don't count `python.exe` names alone: a standard Windows venv's
+   `Scripts\\python.exe` is the interpreter entry point, not a guaranteed
+   launcher/child pair. Use `ParentProcessId` and command lines to decide whether
+   two entries belong to one worker; otherwise a real duplicate can be mistaken
+   for the venv.
+4. If a checkpoint file (`<clip>.json.part`) could have been written to by
+   more than one process -- i.e. you skipped step 1-2 even once during that
+   run's lifetime, or you're not sure -- don't trust it. A quick sanity
+   check: line count should never exceed the clip's expected sampled-frame
+   budget (`native_frames // frame_step`, plus or minus a handful for an
+   in-flight last write). If it does, the file is corrupted; delete it and
+   the derived `_tracks.json`/`_checklist.json` and redo that clip's
+   detection from scratch. Re-running costs GPU time; trusting corrupted
+   detections costs you finding out much later, after re-ID and upload,
+   when a clip's numbers look wrong for no visible reason.
+
 ## The pipeline, stage by stage
 
 Run stages 1-4 once per clip; stages 5-6 once for the whole task.
